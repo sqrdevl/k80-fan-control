@@ -28,6 +28,7 @@ die "Mintemp ($mintemp) must be less than maxtemp ($maxtemp)!!" if $mintemp >= $
 # Internal
 my $smif;          # nvidia-smi file "descriptor".. run running it
 my $smicmd="nvidia-smi --loop='$delay' --format=noheader,nounits,csv --query-gpu=temperature.gpu";
+my $last_pwm=0;
 
 # Colors!
 my $bred = "\033[31;1m";
@@ -81,21 +82,26 @@ sub	set_pwm {
 	$pwm = $maxpwm if $pwm > $maxpwm;  # Just in case, crop value
 	$pwm = $minpwm if $pwm < $minpwm;
 	print " Setting pwm to $minpwm <= [$pwm] <= $maxpwm\n";
-	if (!open($pwm_enable, ">", $pwm_enable_fn)) {
-		warn "${bred}Take this seriously! Cannot write to PWM enable file!\n" .
-			"File: {$pwm_enable_fn}  Error: {$!}$rst";
+	if ($pwm == $last_pwm) { # No change
+		print "  ${bcya}PWM value ($pwm) has not changed.$rst\n";
 	} else {
-		print $pwm_enable "1\n";
-		close $pwm_enable;
-		print "Wrote 1 to $pwm_enable_fn\n";
-	}
-	if (!open($pwm_value, ">", $pwm_fn)) {
-		warn "${bred}Take this seriously! Cannot write to PWM file!\n" .
-			"File: {$pwm_fn}  Error: {$!}$rst";
-	} else {
-		print $pwm_value "$pwm\n";
-		close $pwm_value;
-		print "Wrote $yel$pwm$rst to $pwm_fn\n";
+		if (!open($pwm_enable, ">", $pwm_enable_fn)) {
+			warn "${bred}Take this seriously! Cannot write to PWM enable file!\n" .
+				"File: {$pwm_enable_fn}  Error: {$!}$rst";
+		} else {
+			print $pwm_enable "1\n";
+			close $pwm_enable;
+			print "Wrote 1 to $pwm_enable_fn\n";
+		}
+		if (!open($pwm_value, ">", $pwm_fn)) {
+			warn "${bred}Take this seriously! Cannot write to PWM file!\n" .
+				"File: {$pwm_fn}  Error: {$!}$rst";
+		} else {
+			print $pwm_value "$pwm\n";
+			close $pwm_value;
+			print "Wrote $yel$pwm$rst to $pwm_fn\n";
+			$last_pwm = $pwm;
+		}
 	}
 }
 
