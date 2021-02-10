@@ -1,0 +1,147 @@
+#!/usr/bin/perl
+use warnings; use strict;
+use IO::Select qw();
+
+my $pwm_fn        = "/sys/class/hwmon/hwmon2/pwm4";
+my $pwm_enable_fn = "/sys/class/hwmon/hwmon2/pwm4_enable";
+
+my $expected_gpu_count=3;
+my @gpuids=(1,2);  # ids of interest from nvidia (to check their temperatures)
+                   # at present we load them all, but nvidia-smi -i takes comma-sep too
+
+
+my $delay=3;       # evaluation seconds (also see --loop-ms={ms})
+my $timeout=5;
+my $minpwm = 69;
+my $maxpwm = 255;
+my $mintemp = 33;
+my $maxtemp = 45;
+
+my $verbose = 0;
+
+# Some assertions for configured values:
+die "Timeout ($timeout) must be larger than delay ($delay)!!" if $timeout <= $delay;
+die "Minpwm ($minpwm) must be less than maxpwm ($maxpwm)!!" if $minpwm >= $maxpwm;
+die "Mintemp ($mintemp) must be less than maxtemp ($maxtemp)!!" if $mintemp >= $maxtemp;
+#export s0='stdbuf -i0 -o0'
+
+# Internal
+my $smif;          # nvidia-smi file "descriptor".. run running it
+my $smicmd="nvidia-smi --loop='$delay' --format=noheader,nounits,csv --query-gpu=temperature.gpu";
+
+# Colors!
+my $bred = "\033[31;1m";
+my $yel = "\033[33;1m";
+my $rst = "\033[0m";
+my $bcya = "\033[36;1m";
+my $whi = "\033[37;1m";
+
+#$s0 nvidia-smi -l -q -d temperature -i 0 | $s0 grep -i 'GPU.Current.Temp' | $s0 sed -e 's/^.*: //; s/ C.*//'
+#echo 'nvidia-smi --loop="$delay" --format=noheader,nounits,csv --query-gpu=temperature.gpu -i "$gpuid"'
+#nvidia-smi --loop="$delay" --format=noheader,nounits,csv --query-gpu=temperature.gpu -i "$gpuid"
+
+sub set_max { # Set fan to max speed
+}
+
+sub failure { # This is bad
+	my $ec = shift;
+	warn $bred . $ec . $rst;
+	set_max();
+}
+
+sub get_nvidia_smigle {
+	my $smifile;
+	open($smifile, "-|", $smicmd) || failure("Error opening nvidia-smi: {Error: $!}");
+	return $smifile;
+}
+
+sub calc_and_set_fan {
+	my @temps = @_;
+	my $maxtemp = 0;
+	for my $gpuid (@gpuids) {
+		if ($#temps < $gpuid) { # gpuid expected not found in list!
+			failure("List of gpuids is short! Got " . $#temps+1 .
+				". Was looking for " . $gpuid);
+		} elsif ($temps[$gpuid] < 1) {
+			failure("Expected a real temperature, found $temps[$gpuid] for gpuid $gpuid");
+
+		} else {
+			$maxtemp = $temps[$gpuid] if $temps[$gpuid] > $maxtemp;
+		}
+	}
+	print "Max temperature found: $yel$maxtemp$rst\n";
+	my $pwm = calc_fan_speed($maxtemp);
+}
+
+sub	set_pwm {
+	my ($pwm_enable, $pwm_value);
+
+	my $pwm = shift;
+	$pwm = int($pwm + .5);
+	$pwm = $maxpwm if $pwm > $maxpwm;  # Just in case, crop value
+	$pwm = $minpwm if $pwm < $minpwm;
+	print " Setting pwm to $minpwm <= [$pwm] <= $maxpwm\n";
+	if (!open($pwm_enable, ">", $pwm_enable_fn)) {
+		warn "${bred}Take this seriously! Cannot write to PWM enable file!\n" .
+			"File: {$pwm_enable_fn}  Error: {$!}$rst";
+	} else {
+		print $pwm_enable "1\n";
+		close $pwm_enable;
+		print "Wrote 1 to $pwm_enable_fn\n";
+	}
+	if (!open($pwm_value, ">", $pwm_fn)) {
+		warn "${bred}Take this seriously! Cannot write to PWM file!\n" .
+			"File: {$pwm_fn}  Error: {$!}$rst";
+	} else {
+		print $pwm_value "$pwm\n";
+		close $pwm_value;
+		print "Wrote $yel$pwm$rst to $pwm_fn\n";
+	}
+}
+
+sub calc_fan_speed {
+	my $temp = shift;
+	$temp = $mintemp if $temp < $mintemp;
+	$temp = $maxtemp if $temp > $maxtemp;
+	print " PWM = (($maxpwm-$minpwm) * (($temp-$mintemp) / ($maxtemp-$mintemp))) + $minpwm\n";
+	my $pwm = (($maxpwm-$minpwm) * (($temp-$mintemp) / ($maxtemp-$mintemp))) + $minpwm;
+	set_pwm($pwm);
+}
+
+while (1) {
+	my $smifile = get_nvidia_smigle();
+	my $select = IO::Select->new();
+	$select->add($smifile);
+	my $last_read = time();
+	while (1) {
+		$! = 0;
+		print "\n== " . localtime() . " ==\n";
+		my @dummy = $select->can_read($delay+1);  # Wait for "first" line of bundle
+		if (scalar(@dummy) < 1) {          # timeout or error ($! is set on error)
+			if ($! != 0) {
+				failure("Initial can_read(1) returned an error! {Error: $!}\nWe waited $delay+1 seconds.");
+			} else {
+				failure("Timeout waiting for initial line from nvidia-smi: {Error: $!}\nWe waited $delay+1 seconds.");
+			}
+		} else {
+			my @temps;
+			for my $gpuid (0..$expected_gpu_count) {
+				if ($select->can_read(.1)) {
+					my $line = <$smifile>;
+					$last_read = time();
+					chomp $line;
+					print " We read: $line\n" if $verbose;
+					$temps[$gpuid] = int($line);
+				}
+			}
+			print "Read temperatures: $whi", join(", ", @temps), "$rst\n";
+			calc_and_set_fan(@temps);
+		}
+		if (time()-$last_read > $timeout) {
+			failure("No reads in over $timeout seconds. Restarting nvidia-smi");
+			last;
+		}
+	}
+	close $smifile;
+}
+
