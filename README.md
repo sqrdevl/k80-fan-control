@@ -3,7 +3,7 @@
 by jaggz.h who is still using gmail.com  
 2021-02-10
 
-![GPU's being watched ](img/idle-2021-02-10.png "Script monitoring temperatures")
+![GPU's being watched ](img/inuse-2021-02-10.png "Script monitoring temperatures")
 ![Fan-mount Prototype](img/prototype-2021-02-10.jpg "Fans mounted on box-cutout")
 
 ## Bonuses:
