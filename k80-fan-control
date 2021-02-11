@@ -34,11 +34,11 @@
 #    This is not preferred anyway, in my opinion, because a change to those
 #    files might suddenly result in your user not having permission to set
 #    the fan, resulting in damage to your card.
-# die "We're not going to run unless you read the disclaimer\n" .
-#     " (found in this file)," .
-#     "accept the release of liability,\n" .
-#     "and maybe testify that you're careful enough to do this.\n" .
-#     "Oh, and then comment out this die() message.";
+die "We're not going to run unless you read the disclaimer\n" .
+    " (found in this file)," .
+    "accept the release of liability,\n" .
+    "and maybe testify that you're careful enough to do this.\n" .
+    "Oh, and then comment out this die() message.";
 use warnings; use strict;
 use IO::Select qw();
 $!=1;
