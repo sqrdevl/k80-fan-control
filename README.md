@@ -10,6 +10,7 @@ by jaggz.h who is still using gmail.com
 1. Yes it's written in perl!
 1. Yes that is a Huggies babywipes box.
 1. This is the first version of this script.
+1. It checks for existing running versions of itself (pgrep) and won't run again. There's no way to force it currently.
 1. It uses nvidia-smi's output loop to monitor, and tests if it fails and will restart nvidia-smi if it has to.  It must be in the path.  Writing to the PWM speed control files requires root.
 1. Look at the top of the file for configuration variables.
 1. But first, some help with K80's in a PC is likely needed...

@@ -76,7 +76,6 @@ my $maxpwm = 255;
 my $mintemp = 33;
 my $maxtemp = 45;  # See section description above
 my $verbose = 0;
-
 # Some assertions for configured values:
 die "Timeout ($timeout) must be larger than delay ($delay)!!" if $timeout <= $delay;
 die "Minpwm ($minpwm) must be less than maxpwm ($maxpwm)!!" if $minpwm >= $maxpwm;
@@ -86,7 +85,10 @@ die "Mintemp ($mintemp) must be less than maxtemp ($maxtemp)!!" if $mintemp >= $
 # Internal
 my $smif;          # nvidia-smi file "descriptor".. run running it
 my $smicmd="nvidia-smi --loop='$delay' --format=noheader,nounits,csv --query-gpu=temperature.gpu";
-my $last_pwm=0;
+my $last_pwm=-1;    # value of last pwm setting we wrote
+
+my $our_name = get_our_name($0);  # process name for preventing duplicate runs
+check_competing_processes();
 
 # Colors!
 my $bred = "\033[31;1m";
@@ -101,6 +103,24 @@ my $whi = "\033[37;1m";
 
 sub set_max { # Set fan to max speed
 }
+
+sub get_our_name {
+	my $zero = shift;
+	$zero =~ s#^.*/##;
+	$zero;
+}
+
+sub find_competing_processes {
+	my @procs = `pgrep '$our_name'`;
+}
+
+sub check_competing_processes {
+	my @procs = find_competing_processes();
+	if (@procs > 1) {
+		die "Another one of us ($our_name) is running. Modify me to allow this.";
+	}
+}
+
 
 sub failure { # This is bad
 	# prints time, message, and sets max fan speed (unless setmax is set to 0)
@@ -128,7 +148,6 @@ sub pstderr {
 		$indent, "",
 	);
 }
-
 
 sub get_nvidia_smigle {
 	my $smifile;
