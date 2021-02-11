@@ -73,7 +73,7 @@ my $delay=3;       # (s) between checks of GPU temperatures (ints)
 my $timeout=5;     # (s) for safety, if we pass this nvidia-smi will be restarted
 my $minpwm = 69;
 my $maxpwm = 255;
-my $mintemp = 33;
+my $mintemp = 36;
 my $maxtemp = 45;  # See section description above
 my $verbose = 0;
 # Some assertions for configured values:
@@ -178,15 +178,20 @@ sub calc_and_set_fan {
 }
 
 sub	set_pwm {
+	# set_pwm(pwm_integer [0-255], temp=>36)  # temp is for display here
+	# set_pwm(0, temp=>25, zero=>1)           # Zero not allowed unless told so
 	my ($pwm_enable, $pwm_value);
 
 	my $pwm = shift;
 	my %opts = @_;
 	my $realtemp = $opts{temp};
+	my $allowzero = $opts{zero} // 0;
 
 	$pwm = int($pwm + .5);
 	$pwm = $maxpwm if $pwm > $maxpwm;  # Just in case, crop value
-	$pwm = $minpwm if $pwm < $minpwm;
+	if (!$allowzero) {
+		$pwm = $minpwm if $pwm < $minpwm; # We need to allow 0
+	}
 	print " Setting pwm to $minpwm <= [$pwm] <= $maxpwm\n";
 	if ($pwm == $last_pwm) { # No change
 		print "  ${bcya}PWM value ($pwm) has not changed.$rst\n";
@@ -224,11 +229,15 @@ sub	set_pwm {
 sub calc_fan_speed {
 	my $temp = shift;
 	my $realtemp = $temp;
-	$temp = $mintemp if $temp < $mintemp;
-	$temp = $maxtemp if $temp > $maxtemp;
-	print " PWM = (($maxpwm-$minpwm) * (($temp-$mintemp) / ($maxtemp-$mintemp))) + $minpwm\n";
-	my $pwm = (($maxpwm-$minpwm) * (($temp-$mintemp) / ($maxtemp-$mintemp))) + $minpwm;
-	set_pwm($pwm, temp=>$realtemp);
+	if ($realtemp < $mintemp) {
+		set_pwm(0, temp=>$realtemp, zero=>1);  # Allow zero
+	} else {
+		$temp = $mintemp if $temp < $mintemp;
+		$temp = $maxtemp if $temp > $maxtemp;
+		print " PWM = (($maxpwm-$minpwm) * (($temp-$mintemp) / ($maxtemp-$mintemp))) + $minpwm\n";
+		my $pwm = (($maxpwm-$minpwm) * (($temp-$mintemp) / ($maxtemp-$mintemp))) + $minpwm;
+		set_pwm($pwm, temp=>$realtemp);
+	}
 }
 
 sub timestr_short {
@@ -262,7 +271,16 @@ while (1) {
 					$temps[$gpuid] = int($line);
 				}
 			}
-			print "Read temperatures: $whi", join(", ", @temps), "$rst\n";
+			print "Read temperatures: $whi";
+			# Whole bunch of stuff just to put [brackets] around the
+			# gpus of interest:
+			print join(", ",
+				map {
+					my $tempi;
+					$tempi=$_;
+					(grep {$_ == $tempi} @gpuids) ? "[$temps[$_]]" : "$temps[$_]";
+				} (0 .. $#temps));
+			print "$rst\n";
 			calc_and_set_fan(@temps);
 		}
 		if (time()-$last_read > $timeout) {
