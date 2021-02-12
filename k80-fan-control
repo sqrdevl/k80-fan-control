@@ -41,6 +41,7 @@ die "We're not going to run unless you read the disclaimer\n" .
     "Oh, and then comment out this die() message.";
 use warnings; use strict;
 use IO::Select qw();
+use utf8;
 $!=1;
 
 #########################################################################
@@ -67,14 +68,15 @@ my @gpuids=(1,2);  # ids of interest from nvidia (to check their temperatures)
 #########################################################################
 #  LESS NEEDY CONFIG (but note that maxtemp is when pwm will be at max)
 #  (These should be safe defaults, but do look at mintemp/maxtemp)
-#  1. At mintemp, the fan's PWM value will be set to minpwm
-#  2. It will increase linearly, up to maxpwm, until maxtemp
+#  1. Below mintemp, the fan's PWM value will be set to 0
+#  2. AT mintemp, the fan's PWM value will be set to minpwm
+#  3. It will increase linearly, up to maxpwm, until maxtemp
 my $delay=3;       # (s) between checks of GPU temperatures (ints)
 my $timeout=5;     # (s) for safety, if we pass this nvidia-smi will be restarted
 my $minpwm = 69;
 my $maxpwm = 255;
-my $mintemp = 36;
-my $maxtemp = 45;  # See section description above
+my $mintemp = 38;
+my $maxtemp = 53;  # See section description above
 my $verbose = 0;
 # Some assertions for configured values:
 die "Timeout ($timeout) must be larger than delay ($delay)!!" if $timeout <= $delay;
@@ -92,6 +94,7 @@ check_competing_processes();
 
 # Colors!
 my $bred = "\033[31;1m";
+my $bgre = "\033[32;1m";
 my $yel = "\033[33;1m";
 my $rst = "\033[0m";
 my $bcya = "\033[36;1m";
@@ -157,7 +160,7 @@ sub get_nvidia_smigle {
 
 sub calc_and_set_fan {
 	my @temps = @_;
-	my $maxtemp = 0;
+	my $curmaxtemp = 0;
 	for my $gpuid (@gpuids) {
 		# Since the user's choices are indexes, they might be out of order,
 		#  so the following test checks for each one they request.
@@ -170,11 +173,11 @@ sub calc_and_set_fan {
 			failure("Expected a real temperature, found $temps[$gpuid] for gpuid $gpuid");
 
 		} else {
-			$maxtemp = $temps[$gpuid] if $temps[$gpuid] > $maxtemp;
+			$curmaxtemp = $temps[$gpuid] if $temps[$gpuid] > $curmaxtemp;
 		}
 	}
-	print "Max temperature found: $yel$maxtemp$rst\n";
-	my $pwm = calc_fan_speed($maxtemp);
+	print "Max temperature found: $yel$curmaxtemp$rst (range [$mintemp - $maxtemp] degC)\n";
+	my $pwm = calc_fan_speed($curmaxtemp);
 }
 
 sub	set_pwm {
@@ -245,6 +248,8 @@ sub timestr_short {
 	sprintf "%04d-%d-%d %d:%d:%ds", $year+1900, $mon+1, $mday, $hour, $min, $sec;
 }
 
+print "\n";
+print "Temperature range settings: [$bgre$mintemp - $bred$maxtemp$rst] degC\n";
 while (1) {
 	my $smifile = get_nvidia_smigle();
 	my $select = IO::Select->new();
