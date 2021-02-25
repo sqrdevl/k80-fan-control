@@ -3,11 +3,22 @@
 by jaggz.h who is still using gmail.com  
 2021-02-10
 
+# Danger:
+
+This software modifies one or more system fans.  Its intent is to try to mis-use
+a specialty GPU card in a normal PC not designed for it, but this is inherently
+a known problem; doing this, including modifying system fans, or otherwise
+using this software, can result in damage to your hardware, your fingers, pets,
+family members, etc.  You may even burn your house down as a result.  Please do
+not use this unless you know what you're doing, release the author(s) and
+contributor(s) from all liability, and read and accept the license and
+disclaimers.
+
 ![GPU's being watched ](img/inuse-2021-02-10.png "Script monitoring temperatures")
 ![Fan-mount Prototype](img/prototype-2021-02-10.jpg "Fans mounted on box-cutout")
 
 ## Bonuses:
-1. Yes it's written in perl!
+1. It's written in perl!
 1. Yes that is a Huggies babywipes box.
 1. This is the first version of this script.
 1. It checks for existing running versions of itself (pgrep) and won't run again. There's no way to force it currently.

@@ -1,20 +1,47 @@
 #!/usr/bin/perl
-# Monitors nvidia-smi GPU temperature output.
-# Sets fan speed.
+
+# Copyright 2021 Jaggz H.
+#   (The jaggz.h @ gmail.com, in 2020)
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, unless
+# Jaggz changes the licensing during his lifetime, or his designated
+# heirs are given such permission by him; otherwise, any later version
+# of GPL will be applied.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# In fact, Jaggz adds, this software can be dangerous, and may very well
+# damage your computer, burn your house down, etc.  Do not use this unless
+# you know what you're doing.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# DANGER!  Please read!
+#  This software is not a toy, and can modify one or more system fans.
+#  MODIFYING SYSTEM FANS CAN COOK OR OTHERWISE DAMAGE YOUR HARDWARE, FINGERS,
+#  PETS, ETC.
+
+# Software description: Monitors nvidia-smi GPU temperature output.  Tries to
+# set a fan speed to compensate.
+
+# Current official repository: https://github.com/jaggzh/k80-fan-control
+
+# Purpose: This was designed because the Nvidia K80 has no fans of its own.
+# DANGER DANGER DANGER!  Using your own fan control, especially one
+# monitored by a user process, even as root, is risky.  You might even get
+# values wrong.  You might cook your card or modify the wrong fan, or somehow
+# break something in some other way.
+
+# Values given are in Centigrade Writes abundant info to output (stdout)
+# Log-worthy information goes to stderr, thus, you can >/dev/null for minimal
+# output.
 #
-# DANGER DANGER DANGER!
-# Using your own fan control, especially one monitored by a user process,
-# even as root, is risky.  You might even get values wrong.
-# You might cook your card or mess up some other fan or damage your system.
-#
-# By using this software you accept all responsibility and liability for
-# damages and hold the author(s) free from all claims.
-# The software is for educational purposes only and you should not use it
-# unless you know what you are doing!
-#
-# Values given are in Centigrade
-# Writes abundant info to output (stdout)
-# Log-worthy information goes to stderr, thus, you can >/dev/null for minimal output
 # Configure with sections below
 
 # Usage:
@@ -26,17 +53,18 @@
 # 2. MOST PREFERRED FOR RELIABILITY: Run as root:
 #  2a. Using:       crontab -e as root:
 #    m   h dom mon dow  command
-#    */5 * *   *   *    /path/to/nvidia-k80-fan/k80-fan-control >/dev/null
-#  2b. Or editing:  /etc/crontab
+#    */5 * *   *   *    /path/to/nvidia-k80-fan/k80-fan-control >/dev/null 2>>/var/log/k80-fan-control
+#  2b. Or editing /etc/crontab
 #    m   h dom mon dow user  command
-#    */5 * *   *   *   root  /path/to/nvidia-k80-fan/k80-fan-control >/dev/null
+#    */5 * *   *   *   root  /path/to/nvidia-k80-fan/k80-fan-control >/dev/null 2>>/var/log/k80-fan-control
+#    * Note: It runs in a loop, itself, and is going to keep dumping out errors to your log
+#            with the above commands, for now, when it sees itself already running.
 # 3. Figure out how to get your user access to the sys pwm files
 #    This is not preferred anyway, in my opinion, because a change to those
 #    files might suddenly result in your user not having permission to set
-#    the fan, resulting in damage to your card.
-die "We're not going to run unless you read the disclaimer\n" .
-    " (found in this file)," .
-    "accept the release of liability,\n" .
+#    the fan, resulting in damage to your card when it overheats.
+die "We're not going to run unless you read and accept the terms and disclaimer\n" .
+    " (found in this file), accept all liability for consequences,\n" .
     "and maybe testify that you're careful enough to do this.\n" .
     "Oh, and then comment out this die() message.";
 use warnings; use strict;
@@ -73,9 +101,12 @@ my @gpuids=(1,2);  # ids of interest from nvidia (to check their temperatures)
 #  3. It will increase linearly, up to maxpwm, until maxtemp
 my $delay=3;       # (s) between checks of GPU temperatures (ints)
 my $timeout=5;     # (s) for safety, if we pass this nvidia-smi will be restarted
-my $minpwm = 69;
+my $minpwm = 49;
 my $maxpwm = 255;
-my $mintemp = 38;
+my $error_count = 0;
+my $errors_before_max = int(5/$delay); # Decides from seconds how many iterations
+my $error_pwm = 254;
+my $mintemp = 39;
 my $maxtemp = 53;  # See section description above
 my $verbose = 0;
 # Some assertions for configured values:
@@ -104,7 +135,18 @@ my $whi = "\033[37;1m";
 #echo 'nvidia-smi --loop="$delay" --format=noheader,nounits,csv --query-gpu=temperature.gpu -i "$gpuid"'
 #nvidia-smi --loop="$delay" --format=noheader,nounits,csv --query-gpu=temperature.gpu -i "$gpuid"
 
-sub set_max { # Set fan to max speed
+sub set_error_pwm { # Set fan to max speed
+	#my $pwm = calc_fan_speed($curmaxtemp);
+	$error_count++;
+	if ($error_count >= $errors_before_max) {
+		set_pwm($maxpwm, temp_display=>"ERROR: Error count high ($error_count >= max $errors_before_max). Going to max PWM $maxpwm");
+	} else { # Low error count
+		if ($last_pwm > 0) {   # Had a last_pwm so we'll just stick with that
+			set_pwm($last_pwm, temp_display=>"ERROR: Error count low ($error_count < max $errors_before_max), but last_pwm available so using it ($last_pwm)");
+		} else {               # Had NO last_pwm (0) so we'll use the error_pwm for now
+			set_pwm($error_pwm, temp_display=>"ERROR: Error count low ($error_count < max $errors_before_max), but last_pwm < 1, so using error_pwm ($error_pwm)");
+		}
+	}
 }
 
 sub get_our_name {
@@ -126,14 +168,14 @@ sub check_competing_processes {
 
 
 sub failure { # This is bad
-	# prints time, message, and sets max fan speed (unless setmax is set to 0)
+	# prints time, message, and sets error fan speed (unless setspeed is set to 0)
 	# failure("message")
-	# failure("message", setmax=>0)
+	# failure("message", setspeed=>0)
 	my $msg = shift;
 	my %opts = @_;
-	my $setmax = $opts{setmax} // 1;  # setmax=>1 (default) sets max fan speed
+	my $setspeed = $opts{setspeed} // 1;  # setspeed=>1 (default) sets max fan speed
 	warn sprintf("${bred}[%s] $msg$rst", timestr_short());
-	set_max() if $setmax;
+	set_error_pwm() if $setspeed;
 }
 
 sub pstderr {
@@ -143,7 +185,7 @@ sub pstderr {
 	# log("message", color=>$bred, indent=>2) # 2 spaces before
 	my $msg = shift;
 	my %opts = @_;
-	my $color = $opts{color} // "";  # setmax=>1 (default) sets max fan speed
+	my $color = $opts{color} // "";
 	my $indent = $opts{indent} // 0; # indent line this many spaces
 	my $reset = $color ne "" ? $rst : "";
 	print STDERR sprintf("${color}[%s] %*s$msg$reset\n",
@@ -161,6 +203,7 @@ sub get_nvidia_smigle {
 sub calc_and_set_fan {
 	my @temps = @_;
 	my $curmaxtemp = 0;
+	my $errors=0;
 	for my $gpuid (@gpuids) {
 		# Since the user's choices are indexes, they might be out of order,
 		#  so the following test checks for each one they request.
@@ -169,15 +212,21 @@ sub calc_and_set_fan {
 		if ($#temps < $gpuid) { # gpuid expected not found in list!
 			failure("List of gpuids is short! Got only " . ($#temps+1) .
 				". Was looking for " . $expected_gpu_count);
+			$errors++;
 		} elsif ($temps[$gpuid] < 1) {
 			failure("Expected a real temperature, found $temps[$gpuid] for gpuid $gpuid");
-
+			$errors++;
 		} else {
 			$curmaxtemp = $temps[$gpuid] if $temps[$gpuid] > $curmaxtemp;
 		}
 	}
 	print "Max temperature found: $yel$curmaxtemp$rst (range [$mintemp - $maxtemp] degC)\n";
-	my $pwm = calc_fan_speed($curmaxtemp);
+	if ($errors>0) {
+		failure("Failures during temp read ($errors)", setspeed=>1);
+	} else {
+		$error_count = 0;  # Reset global error count
+		my $pwm = calc_fan_speed($curmaxtemp);
+	}
 }
 
 sub	set_pwm {
@@ -187,7 +236,7 @@ sub	set_pwm {
 
 	my $pwm = shift;
 	my %opts = @_;
-	my $realtemp = $opts{temp};
+	my $realtemp_display = $opts{temp_display};
 	my $allowzero = $opts{zero} // 0;
 
 	$pwm = int($pwm + .5);
@@ -201,7 +250,7 @@ sub	set_pwm {
 	} else {
 		if (!open($pwm_enable, "+>", $pwm_enable_fn)) {
 			failure("Take this seriously! Cannot write to PWM enable file!\n" .
-				"File: {$pwm_enable_fn}  Error: {$!}", setmax=>0);
+				"File: {$pwm_enable_fn}  Error: {$!}", setspeed=>0);
 		} else {
 			my $val = <$pwm_enable>;
 			chomp $val;
@@ -215,12 +264,12 @@ sub	set_pwm {
 		}
 		if (!open($pwm_value, ">", $pwm_fn)) {
 			failure("Take this seriously! Cannot write to PWM file!\n" .
-				"File: {$pwm_fn}  Error: {$!}", setmax=>0);
+				"File: {$pwm_fn}  Error: {$!}", setspeed=>0);
 		} else {
 			print $pwm_value "$pwm\n";
 			close $pwm_value;
-			if (defined $realtemp) {
-				pstderr("Wrote $yel$pwm$rst to $pwm_fn (temp:${realtemp}C)");
+			if (defined $realtemp_display) {
+				pstderr("Wrote $yel$pwm$rst to $pwm_fn (temp:${realtemp_display}C)");
 			} else {
 				pstderr("Wrote $yel$pwm$rst to $pwm_fn");
 			}
@@ -233,13 +282,13 @@ sub calc_fan_speed {
 	my $temp = shift;
 	my $realtemp = $temp;
 	if ($realtemp < $mintemp) {
-		set_pwm(0, temp=>$realtemp, zero=>1);  # Allow zero
+		set_pwm(0, temp_display=>$realtemp, zero=>1);  # Allow zero
 	} else {
 		$temp = $mintemp if $temp < $mintemp;
 		$temp = $maxtemp if $temp > $maxtemp;
 		print " PWM = (($maxpwm-$minpwm) * (($temp-$mintemp) / ($maxtemp-$mintemp))) + $minpwm\n";
 		my $pwm = (($maxpwm-$minpwm) * (($temp-$mintemp) / ($maxtemp-$mintemp))) + $minpwm;
-		set_pwm($pwm, temp=>$realtemp);
+		set_pwm($pwm, temp_display=>$realtemp);
 	}
 }
 
