@@ -63,10 +63,10 @@
 #    This is not preferred anyway, in my opinion, because a change to those
 #    files might suddenly result in your user not having permission to set
 #    the fan, resulting in damage to your card when it overheats.
-die "We're not going to run unless you read and accept the terms and disclaimer\n" .
-    " (found in this file), accept all liability for consequences,\n" .
-    "and maybe testify that you're careful enough to do this.\n" .
-    "Oh, and then comment out this die() message.";
+# die "We're not going to run unless you read and accept the terms and disclaimer\n" .
+#     " (found in this file), accept all liability for consequences,\n" .
+#     "and maybe testify that you're careful enough to do this.\n" .
+#     "Oh, and then comment out this die() message.";
 use warnings; use strict;
 use IO::Select qw();
 use utf8;
@@ -108,7 +108,7 @@ my $errors_seconds_allow = 9;          # seconds before we freak out and force f
 my $errors_before_max = int($errors_seconds_allow/$delay); # Decides from seconds how many iterations
 my $error_pwm = 154;
 my $mintemp = 47;
-my $maxtemp = 58;  # See section description above
+my $maxtemp = 63;  # See section description above
 my $verbose = 0;
 # Some assertions for configured values:
 die "Timeout ($timeout) must be larger than delay ($delay)!!" if $timeout <= $delay;
@@ -121,6 +121,12 @@ my $smif;          # nvidia-smi file "descriptor".. run running it
 my $smicmd="nvidia-smi --loop='$delay' --format=noheader,nounits,csv --query-gpu=temperature.gpu";
 my $last_pwm=-1;    # value of last pwm setting we wrote
 
+my @tempsbuf;       # Pool of buffers
+my $read_count=0;   # How many read in last chunk of output from nvidia-smi
+my $last_read = 0;
+my $history_runs = 60; # How many bundles of readings we keep in history
+                       #  60 would mean 60*$expected_gpu_count values retained
+
 my $our_name = get_our_name($0);  # process name for preventing duplicate runs
 check_competing_processes();
 
@@ -131,6 +137,7 @@ my $yel = "\033[33;1m";
 my $rst = "\033[0m";
 my $bcya = "\033[36;1m";
 my $whi = "\033[37;1m";
+my $bgred = "\033[41m";
 
 #$s0 nvidia-smi -l -q -d temperature -i 0 | $s0 grep -i 'GPU.Current.Temp' | $s0 sed -e 's/^.*: //; s/ C.*//'
 #echo 'nvidia-smi --loop="$delay" --format=noheader,nounits,csv --query-gpu=temperature.gpu -i "$gpuid"'
@@ -228,7 +235,10 @@ sub calc_and_set_fan {
 	if ($errors>0) {
 		failure("Failures during temp read ($errors)", setspeed=>1);
 	} else {
-		$error_count = 0;  # Reset global error count
+		# Don't reset this here anymore. Since we're now pulling from the
+		# continuing @tempsbuf array the above error testing should never
+		# fail (so we will always succeed).
+		#$error_count = 0;  # Reset global error count
 		my $pwm = calc_fan_speed($curmaxtemp);
 	}
 }
@@ -273,7 +283,7 @@ sub	set_pwm {
 			print $pwm_value "$pwm\n";
 			close $pwm_value;
 			if (defined $realtemp_display) {
-				pstderr("Wrote $yel$pwm$rst to $pwm_fn (temp: ${realtemp_display}C)");
+				pstderr("Wrote $yel$pwm$rst to $pwm_fn (temp: ${realtemp_display})");
 			} else {
 				pstderr("Wrote $yel$pwm$rst to $pwm_fn");
 			}
@@ -286,13 +296,13 @@ sub calc_fan_speed {
 	my $temp = shift;
 	my $realtemp = $temp;
 	if ($realtemp < $mintemp) {
-		set_pwm(0, temp_display=>$realtemp, zero=>1);  # Allow zero
+		set_pwm(0, temp_display=>"${realtemp}C", zero=>1);  # Allow zero
 	} else {
 		$temp = $mintemp if $temp < $mintemp;
 		$temp = $maxtemp if $temp > $maxtemp;
 		print " PWM = (($maxpwm-$minpwm) * (($temp-$mintemp) / ($maxtemp-$mintemp))) + $minpwm\n";
 		my $pwm = (($maxpwm-$minpwm) * (($temp-$mintemp) / ($maxtemp-$mintemp))) + $minpwm;
-		set_pwm($pwm, temp_display=>$realtemp);
+		set_pwm($pwm, temp_display=>"${realtemp}C");
 	}
 }
 
@@ -301,37 +311,73 @@ sub timestr_short {
 	sprintf "%04d-%d-%d %d:%d:%ds", $year+1900, $mon+1, $mday, $hour, $min, $sec;
 }
 
+# Fills in buffer with as many readings as are available
+sub read_temps_until_delay {
+	my ($smifile, $select) = @_;
+	$read_count=0;
+	# Initial select() test if data's available. Timeout of $delay+1 in case
+	# we were in the middle of nvidia-smi's pause
+	my @dummy = $select->can_read($delay+1);
+	if (scalar(@dummy) < 1) {          # timeout or error ($! is set on error)
+		if ($! != 0) {
+			failure("Initial select->can_read($delay+1) returned an error! {Error: $!}\n" .
+				"We waited $delay+1 seconds.");
+		} else {
+			failure("Timeout waiting for initial line from nvidia-smi: {Error: $!}\n" .
+				"We waited $delay+1 seconds.");
+		}
+	} else {
+		while ($select->can_read(.2)) { # Safe? One line should come in faster than this
+			#sleep .1;                  # try to ensure we're not in the middle of a line
+			my $line = <$smifile>;      # reads until \n
+			chomp $line;
+			print " We read: $line\n" if $verbose;
+			push(@tempsbuf, int($line));
+			$read_count++;
+			$last_read = time();
+		}
+	}
+	return $read_count;
+}
+
+sub prune_temps {
+	my $expected_vals = $history_runs*$expected_gpu_count;
+	if ($#tempsbuf+1 >= $expected_vals) {
+		@tempsbuf = splice(@tempsbuf,  -$expected_vals);
+	}
+}
+
 print "\n";
 print "Temperature range settings: [$bgre$mintemp - $bred$maxtemp$rst] degC\n";
 while (1) {
 	my $smifile = get_nvidia_smigle();
 	my $select = IO::Select->new();
 	$select->add($smifile);
-	my $last_read = time();
 	while (1) {
 		$! = 0;
 		print "\n== " . localtime() . " ==\n";
-		my @dummy = $select->can_read($delay+1);  # Wait for "first" line of bundle
-		if (scalar(@dummy) < 1) {          # timeout or error ($! is set on error)
-			if ($! != 0) {
-				failure("Initial can_read(1) returned an error! {Error: $!}\nWe waited $delay+1 seconds.");
-			} else {
-				failure("Timeout waiting for initial line from nvidia-smi: {Error: $!}\nWe waited $delay+1 seconds.");
-			}
+		read_temps_until_delay($smifile, $select);
+		if ($read_count <= 0) {
+			$error_count++;
+			failure("Nothing read this round. Why?",
+				setspeed=>0);
+		} elsif ($read_count < $expected_gpu_count) {
+			$error_count++;
+			failure("Read a short list of temperatures ($read_count < $expected_gpu_count)",
+				setspeed=>0);
+		} elsif ($#tempsbuf < $expected_gpu_count-1) {
+			$error_count++;
+			failure("Temperature buffer has fewer entries (" .
+					($#tempsbuf+1) .
+					") than expected (%s)",
+				setspeed=>0);
 		} else {
-			my @temps;
-			for my $gpuid (0..$expected_gpu_count) {
-				if ($select->can_read(.3)) {
-					my $line = <$smifile>;
-					$last_read = time();
-					chomp $line;
-					print " We read: $line\n" if $verbose;
-					$temps[$gpuid] = int($line);
-				}
-			}
+			# On success, reset error count
+			$error_count = 0;
 			print "Read temperatures: $whi";
 			# Whole bunch of stuff just to put [brackets] around the
 			# gpus of interest:
+			my @temps = splice(@tempsbuf, -$expected_gpu_count);
 			print join(", ",
 				map {
 					my $tempi;
@@ -341,8 +387,13 @@ while (1) {
 			print "$rst\n";
 			calc_and_set_fan(@temps);
 		}
-		if (time()-$last_read > $timeout) {
-			failure("No reads in over $timeout seconds. Restarting nvidia-smi");
+		prune_temps();
+		# Additional test for timeouts.
+		if ($error_count >= $errors_before_max) {
+			failure("$bgred${whi}Too many errors ($error_count > $errors_before_max). Restarting nvidia-smi$rst", setspeed=>1);
+			last;
+		} elsif (time()-$last_read > $timeout) {
+			failure("$bgred${whi}No reads in over $timeout seconds. Restarting nvidia-smi$rst", setspeed=>1);
 			last;
 		}
 	}
