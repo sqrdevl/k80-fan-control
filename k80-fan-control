@@ -101,13 +101,14 @@ my @gpuids=(1,2);  # ids of interest from nvidia (to check their temperatures)
 #  3. It will increase linearly, up to maxpwm, until maxtemp
 my $delay=3;       # (s) between checks of GPU temperatures (ints)
 my $timeout=5;     # (s) for safety, if we pass this nvidia-smi will be restarted
-my $minpwm = 49;
+my $minpwm = 23;
 my $maxpwm = 255;
 my $error_count = 0;
-my $errors_before_max = int(5/$delay); # Decides from seconds how many iterations
-my $error_pwm = 254;
-my $mintemp = 39;
-my $maxtemp = 53;  # See section description above
+my $errors_seconds_allow = 9;          # seconds before we freak out and force fan on
+my $errors_before_max = int($errors_seconds_allow/$delay); # Decides from seconds how many iterations
+my $error_pwm = 154;
+my $mintemp = 47;
+my $maxtemp = 58;  # See section description above
 my $verbose = 0;
 # Some assertions for configured values:
 die "Timeout ($timeout) must be larger than delay ($delay)!!" if $timeout <= $delay;
@@ -139,12 +140,15 @@ sub set_error_pwm { # Set fan to max speed
 	#my $pwm = calc_fan_speed($curmaxtemp);
 	$error_count++;
 	if ($error_count >= $errors_before_max) {
-		set_pwm($maxpwm, temp_display=>"ERROR: Error count high ($error_count >= max $errors_before_max). Going to max PWM $maxpwm");
+		set_pwm($maxpwm,
+			temp_display=>"${bred}ERROR: Error count high ($error_count >= max $errors_before_max). Going to max PWM $maxpwm$rst");
 	} else { # Low error count
-		if ($last_pwm > 0) {   # Had a last_pwm so we'll just stick with that
-			set_pwm($last_pwm, temp_display=>"ERROR: Error count low ($error_count < max $errors_before_max), but last_pwm available so using it ($last_pwm)");
+		if ($last_pwm >= 0) {   # Had a last_pwm so we'll just stick with that
+			set_pwm($last_pwm,
+				temp_display=>"${bred}ERROR: Error count low ($error_count < max $errors_before_max), but last_pwm available so using it ($last_pwm)$rst");
 		} else {               # Had NO last_pwm (0) so we'll use the error_pwm for now
-			set_pwm($error_pwm, temp_display=>"ERROR: Error count low ($error_count < max $errors_before_max), but last_pwm < 1, so using error_pwm ($error_pwm)");
+			set_pwm($error_pwm,
+				temp_display=>"${bred}ERROR: Error count low ($error_count < max $errors_before_max), but last_pwm < 0 (unknown!), so using error_pwm ($error_pwm)$rst");
 		}
 	}
 }
@@ -269,7 +273,7 @@ sub	set_pwm {
 			print $pwm_value "$pwm\n";
 			close $pwm_value;
 			if (defined $realtemp_display) {
-				pstderr("Wrote $yel$pwm$rst to $pwm_fn (temp:${realtemp_display}C)");
+				pstderr("Wrote $yel$pwm$rst to $pwm_fn (temp: ${realtemp_display}C)");
 			} else {
 				pstderr("Wrote $yel$pwm$rst to $pwm_fn");
 			}
@@ -317,7 +321,7 @@ while (1) {
 		} else {
 			my @temps;
 			for my $gpuid (0..$expected_gpu_count) {
-				if ($select->can_read(.1)) {
+				if ($select->can_read(.3)) {
 					my $line = <$smifile>;
 					$last_read = time();
 					chomp $line;

@@ -14,7 +14,7 @@ not use this unless you know what you're doing, release the author(s) and
 contributor(s) from all liability, and read and accept the license and
 disclaimers.
 
-![GPU's being watched ](img/inuse-2021-02-10.png "Script monitoring temperatures")
+![GPU's being watched ](img/inuse-2021-02-25.png "Script monitoring temperatures")
 ![Fan-mount Prototype](img/prototype-2021-02-10.jpg "Fans mounted on box-cutout")
 
 ## Bonuses:
