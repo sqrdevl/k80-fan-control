@@ -1,7 +1,16 @@
 #!/usr/bin/perl
 
 # Copyright 2021 Jaggz H.
-#   (The jaggz.h @ gmail.com, in 2020)
+#   (jaggz.h who is at gmail.com, in 2021)
+
+# tl;dr: Agree that everything is your fault and I'm not to blame,
+# and that this is under the GLP license, and that you disregard
+# "tl;dr" and do read this all.
+#
+# MAKE SURE TO SET *AND TEST* YOUR MIN/MAX PWM VALUES!
+# The "MAIN CONFIG" below is a few things you must set for this
+# to work right.
+
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -38,6 +47,7 @@
 # values wrong.  You might cook your card or modify the wrong fan, or somehow
 # break something in some other way.
 
+
 # Values given are in Centigrade Writes abundant info to output (stdout)
 # Log-worthy information goes to stderr, thus, you can >/dev/null for minimal
 # output.
@@ -63,10 +73,10 @@
 #    This is not preferred anyway, in my opinion, because a change to those
 #    files might suddenly result in your user not having permission to set
 #    the fan, resulting in damage to your card when it overheats.
-# die "We're not going to run unless you read and accept the terms and disclaimer\n" .
-#     " (found in this file), accept all liability for consequences,\n" .
-#     "and maybe testify that you're careful enough to do this.\n" .
-#     "Oh, and then comment out this die() message.";
+die "We're not going to run unless you read and accept the terms and disclaimer\n" .
+    " (found in this file), accept all liability for consequences,\n" .
+    "and maybe testify that you're careful enough to do this.\n" .
+    "Oh, and then comment out this die() message.";
 use warnings; use strict;
 use IO::Select qw();
 use utf8;
@@ -93,6 +103,17 @@ my @gpuids=(1,2);  # ids of interest from nvidia (to check their temperatures)
                    # At present we load all GPU temps, but nvidia-smi -i
                    # takes comma-separated list too apparently
 
+# PWM speeds are important to set and evaluate.
+# When my BIOS has my chassis fan (the one controlling the fans on the K80) set
+# to PWM mode, the fans won't turn off at all, even if I write 0 to pwm4.
+# My minimum of 23 works for me there, but it will never turn off.
+# HOWEVER!  When I go into DC mode, the fans will not power on until I
+# echo 55 > pwm4
+# So I have my minimum speed set to 60, since I'm in DC mode (so I can turn the
+# fans off completely by setting it to 0)
+my $minpwm = 60;
+my $maxpwm = 255;
+
 #########################################################################
 #  LESS NEEDY CONFIG (but note that maxtemp is when pwm will be at max)
 #  (These should be safe defaults, but do look at mintemp/maxtemp)
@@ -101,8 +122,7 @@ my @gpuids=(1,2);  # ids of interest from nvidia (to check their temperatures)
 #  3. It will increase linearly, up to maxpwm, until maxtemp
 my $delay=3;       # (s) between checks of GPU temperatures (ints)
 my $timeout=5;     # (s) for safety, if we pass this nvidia-smi will be restarted
-my $minpwm = 23;
-my $maxpwm = 255;
+
 my $error_count = 0;
 my $errors_seconds_allow = 9;          # seconds before we freak out and force fan on
 my $errors_before_max = int($errors_seconds_allow/$delay); # Decides from seconds how many iterations
